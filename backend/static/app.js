@@ -738,6 +738,7 @@ const routeByteFilterSelect = document.getElementById('route-byte-filter');
 const routeNodeFilterInput = document.getElementById('route-node-filter');
 const routeNodeFilterResults = document.getElementById('route-node-filter-results');
 const roleFilterButtons = [...document.querySelectorAll('[data-role-filter]')];
+const regionSelect = document.getElementById('region-filter-select');
 let historyWindowSeconds = null;
 if (!routeHistoryEnabled) {
   historyWindowSeconds = 0;
@@ -808,6 +809,50 @@ let visibleRoles = storedVisibleRoles === null
 if (queryParams.has('roles')) {
   visibleRoles = parseVisibleRoles(queryVisibleRoles);
   localStorage.setItem('meshmapVisibleRoles', [...visibleRoles].join(','));
+}
+const REGION_CENTROIDS = {
+  AUS: [30.2672, -97.7431],
+  SAT: [29.4241, -98.4936],
+  HOU: [29.7604, -95.3698],
+  DFW: [32.7767, -96.7970],
+  ELP: [31.7619, -106.4850],
+  ABI: [32.4487, -99.7331],
+  AMA: [35.2220, -101.8313],
+  MFE: [26.2034, -98.2300],
+  SJT: [31.4638, -100.4370],
+  TXK: [33.4418, -94.0377],
+  CRP: [27.8006, -97.3964],
+  ACT: [31.5493, -97.1467],
+};
+const REGION_ZOOM = 10;
+let selectedRegion = localStorage.getItem('meshmapSelectedRegion') || 'all';
+if (queryParams.has('region')) {
+  selectedRegion = String(queryParams.get('region') || 'all').trim() || 'all';
+  localStorage.setItem('meshmapSelectedRegion', selectedRegion);
+}
+function regionAllowed(d) {
+  if (selectedRegion === 'all') return true;
+  return Boolean(d) && String(d.iata || '').toUpperCase() === selectedRegion.toUpperCase();
+}
+function updateRegionFilterOptions() {
+  if (!regionSelect) return;
+  const seen = new Set();
+  for (const d of deviceData.values()) {
+    if (d && d.iata) seen.add(String(d.iata).toUpperCase());
+  }
+  const wanted = ['all', ...[...seen].sort()];
+  const current = [...regionSelect.options].map((o) => o.value);
+  const unchanged = current.length === wanted.length && current.every((v, i) => v === wanted[i]);
+  if (unchanged) return;
+  const prevValue = regionSelect.value || selectedRegion;
+  regionSelect.innerHTML = '';
+  for (const code of wanted) {
+    const opt = document.createElement('option');
+    opt.value = code;
+    opt.textContent = code === 'all' ? 'All' : code;
+    regionSelect.appendChild(opt);
+  }
+  regionSelect.value = wanted.includes(prevValue) ? prevValue : 'all';
 }
 if (routeNodeFilterInput) routeNodeFilterInput.value = routeNodeFilterText;
 const setByteFilterChecks = (root, selected) => {
@@ -2729,6 +2774,13 @@ function routePointRole(point) {
   return 'unknown';
 }
 
+function routePointRegionAllowed(point) {
+  if (selectedRegion === 'all') return true;
+  const device = point && point.point_id ? deviceData.get(point.point_id) : null;
+  if (!device) return true;
+  return regionAllowed(device);
+}
+
 function visibleRouteSegments(meta) {
   if (!meta || !Array.isArray(meta.points)) return [];
   const segments = [];
@@ -2743,7 +2795,7 @@ function visibleRouteSegments(meta) {
       finishSegment();
       return;
     }
-    if (visibleRoles.has(routePointRole(point))) {
+    if (visibleRoles.has(routePointRole(point)) && routePointRegionAllowed(point)) {
       current.push(point);
     } else {
       finishSegment();
@@ -3204,11 +3256,21 @@ function rankedPeers(peers) {
   }));
 }
 
+function peerRegionAllowed(peer) {
+  if (selectedRegion === 'all') return true;
+  const device = peer && peer.peer_id ? deviceData.get(peer.peer_id) : null;
+  if (!device) return true;
+  return regionAllowed(device);
+}
+
 function filteredPeers(peers) {
   const peerItems = rankedPeers(peers);
   const query = normalizedPeerFilter();
-  if (!query) return peerItems;
-  return peerItems.filter(peer => peerMatchesFilter(peer, query));
+  return peerItems.filter(peer => {
+    if (!peerRegionAllowed(peer)) return false;
+    if (query && !peerMatchesFilter(peer, query)) return false;
+    return true;
+  });
 }
 
 function renderCurrentPeers() {
@@ -3529,6 +3591,7 @@ function shouldShowDeviceOnMap(d) {
   return Boolean(d) &&
     nodesVisible &&
     visibleRoles.has(resolveRole(d)) &&
+    regionAllowed(d) &&
     devicePassesMqttOnlyFilter(d) &&
     latLngInViewport(d.lat, d.lon);
 }
@@ -6439,6 +6502,7 @@ function upsertDevice(d, trail) {
   const style = markerStyleForDevice(d);
   deviceData.set(id, d);
   deviceMeta.set(id, { lat: d.lat, lon: d.lon, name: d.name });
+  updateRegionFilterOptions();
 
   // marker
   if (!markers.has(id)) {
@@ -7871,6 +7935,7 @@ function buildMapShareUrl(options = {}) {
     url.searchParams.delete('route_nodes');
   }
   url.searchParams.set('roles', [...visibleRoles].join(','));
+  url.searchParams.set('region', selectedRegion);
   if (options.deviceId) {
     url.searchParams.set('node', options.deviceId);
     url.searchParams.set('nodes', 'on');
@@ -8095,6 +8160,37 @@ roleFilterButtons.forEach((button) => {
   });
 });
 updateRoleFilterUi();
+
+if (regionSelect) {
+  updateRegionFilterOptions();
+  regionSelect.value = selectedRegion;
+  const applySelectedRegion = () => {
+    const centroid = REGION_CENTROIDS[selectedRegion.toUpperCase()];
+    if (centroid) {
+      map.setView(centroid, REGION_ZOOM);
+    }
+    refreshViewportLayers();
+    routeLines.forEach((entry, routeId) => {
+      syncRouteEntryDisplay(routeId, entry);
+    });
+    if (peersActive && peersData) renderCurrentPeers();
+    refreshStats();
+  };
+  // A region restored from localStorage/URL on page load only sets the
+  // <select>'s value above — that doesn't fire 'change', so a refresh
+  // previously left the map on the default statewide view instead of the
+  // saved region's centroid even though node/route filtering was already
+  // correctly scoped. Apply the same recenter+refresh the change handler
+  // does, once, right after restoring the value.
+  if (selectedRegion !== 'all') {
+    applySelectedRegion();
+  }
+  regionSelect.addEventListener('change', () => {
+    selectedRegion = regionSelect.value || 'all';
+    localStorage.setItem('meshmapSelectedRegion', selectedRegion);
+    applySelectedRegion();
+  });
+}
 
 const labelsToggle = document.getElementById('labels-toggle');
 if (labelsToggle) {

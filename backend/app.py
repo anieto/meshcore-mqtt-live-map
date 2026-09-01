@@ -1779,6 +1779,7 @@ def _node_api_payload(device_id: str, state: "DeviceState") -> Dict[str, Any]:
     "name": (state.name or device_names.get(device_id) or ""),
     "device_role": device_role,
     "role": role_value,
+    "iata": state.iata,
     "location": {
       "latitude": float(state.lat),
       "longitude": float(state.lon),
@@ -1907,6 +1908,8 @@ def _load_state() -> None:
       loaded_state = DeviceState(**value)
     except Exception:
       continue
+    if not loaded_state.iata and loaded_state.raw_topic:
+      loaded_state.iata = _parse_meshcore_topic(loaded_state.raw_topic)[0]
     if _coords_are_zero(loaded_state.lat, loaded_state.lon
                        ) or not _within_map_radius(loaded_state.lat, loaded_state.lon):
       dropped_ids.add(str(key))
@@ -2802,6 +2805,7 @@ async def broadcaster():
       name=upd.get("name") or device_names.get(device_id),
       role=upd.get("role") or device_roles.get(device_id),
       raw_topic=upd.get("raw_topic"),
+      iata=_parse_meshcore_topic(upd.get("raw_topic") or "")[0],
     )
     # Apply coordinate overrides
     coord_override = device_coords.get(device_id)
@@ -3993,6 +3997,7 @@ def api_nodes(
   updated_since: Optional[str] = None,
   mode: Optional[str] = None,
   format: Optional[str] = None,
+  iata: Optional[str] = None,
 ):
   _require_prod_token(request)
   cutoff = _parse_updated_since(updated_since)
@@ -4001,10 +4006,13 @@ def api_nodes(
   apply_delta = bool(cutoff is not None and not force_full)
   format_value = (format or "").strip().lower()
   format_nested = format_value in ("nested", "object", "wrapped", "v2")
+  iata_filter = (iata or "").strip().upper()
   nodes: List[Dict[str, Any]] = []
   all_nodes: List[Dict[str, Any]] = []
   max_last_seen = 0.0
   for device_id, state in _stable_dict_copy(devices).items():
+    if iata_filter and (state.iata or "").strip().upper() != iata_filter:
+      continue
     payload = _node_api_payload(device_id, state)
     last_seen = payload.get("last_seen_ts") or 0
     if float(last_seen) > max_last_seen:

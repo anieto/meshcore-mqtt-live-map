@@ -18,6 +18,7 @@ class DeviceState:
   name: Optional[str] = None
   role: Optional[str] = None
   raw_topic: Optional[str] = None
+  iata: Optional[str] = None
 
 
 stats = {
