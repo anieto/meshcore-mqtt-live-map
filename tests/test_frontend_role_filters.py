@@ -27,12 +27,17 @@ def _extract_function(source, name):
 def test_hidden_endpoint_roles_keep_repeater_to_repeater_route_segment():
   source = APP_JS.read_text(encoding="utf-8")
   route_point_role = _extract_function(source, "routePointRole")
+  region_allowed = _extract_function(source, "regionAllowed")
+  route_point_region_allowed = _extract_function(source, "routePointRegionAllowed")
   visible_route_segments = _extract_function(source, "visibleRouteSegments")
   script = f"""
 const visibleRoles = new Set(['repeater']);
 const deviceData = new Map();
+const selectedRegion = 'all';
 const resolveRole = device => device.role || 'unknown';
 {route_point_role}
+{region_allowed}
+{route_point_region_allowed}
 {visible_route_segments}
 const meta = {{ points: [
   {{ point_label: 'Companion', role_label: 'companion', endpoint_only: true,

@@ -28,12 +28,18 @@ def test_peer_filter_preserves_full_list_rank():
   ranked_peers = _extract_function(source, "rankedPeers")
   normalized_filter = _extract_function(source, "normalizedPeerFilter")
   matches_filter = _extract_function(source, "peerMatchesFilter")
+  region_allowed = _extract_function(source, "regionAllowed")
+  peer_region_allowed = _extract_function(source, "peerRegionAllowed")
   filtered_peers = _extract_function(source, "filteredPeers")
   script = f"""
 let peersFilterText = 'charlie';
+const deviceData = new Map();
+const selectedRegion = 'all';
 {ranked_peers}
 {normalized_filter}
 {matches_filter}
+{region_allowed}
+{peer_region_allowed}
 {filtered_peers}
 const incoming = [
   {{ name: 'Alpha', peer_id: 'AA', count: 30 }},
