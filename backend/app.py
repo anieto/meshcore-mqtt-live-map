@@ -99,6 +99,7 @@ from config import (
   MQTT_TRANSPORT,
   MQTT_WS_PATH,
   MQTT_CLIENT_ID,
+  MQTT_SOURCES,
   STATE_DIR,
   STATE_FILE,
   DEVICE_ROLES_FILE,
@@ -385,7 +386,7 @@ def _history_window_seconds_value() -> int:
   return int(max(0, ROUTE_HISTORY_HOURS * 3600))
 
 
-mqtt_client: Optional[mqtt.Client] = None
+mqtt_clients: List[Dict[str, Any]] = []
 background_tasks: Set[asyncio.Task[Any]] = set()
 broadcaster_task: Optional[asyncio.Task[Any]] = None
 clients: Set[WebSocket] = set()
@@ -1017,7 +1018,7 @@ async def _broadcaster_supervisor():
 
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
-  global mqtt_client, broadcaster_task
+  global mqtt_clients, broadcaster_task
 
   print(f"[startup] meshmap version={APP_VERSION}")
   load_map_boundary(force=True)
@@ -1034,41 +1035,44 @@ async def _lifespan(_app: FastAPI):
     )
 
   loop = asyncio.get_running_loop()
-  transport = "websockets" if MQTT_TRANSPORT == "websockets" else "tcp"
 
-  topics_str = ", ".join(MQTT_TOPICS)
-  print(
-    f"[mqtt] connecting host={MQTT_HOST} port={MQTT_PORT} tls={MQTT_TLS} transport={transport} ws_path={MQTT_WS_PATH if transport == 'websockets' else '-'} topics={topics_str}"
-  )
+  mqtt_clients = []
+  for source in MQTT_SOURCES:
+    transport = "websockets" if source["transport"] == "websockets" else "tcp"
+    topics_str = ", ".join(source["topics"])
+    print(
+      f"[mqtt] connecting label={source['label']} host={source['host']} port={source['port']} tls={source['tls']} transport={transport} ws_path={source['ws_path'] if transport == 'websockets' else '-'} topics={topics_str}"
+    )
 
-  mqtt_client = mqtt.Client(
-    mqtt.CallbackAPIVersion.VERSION2,
-    client_id=(MQTT_CLIENT_ID or None),
-    userdata={"loop": loop},
-    transport=transport,
-  )
+    client = mqtt.Client(
+      mqtt.CallbackAPIVersion.VERSION2,
+      client_id=(source["client_id"] or None),
+      userdata={"loop": loop, "label": source["label"], "topics": source["topics"]},
+      transport=transport,
+    )
 
-  if transport == "websockets":
-    mqtt_client.ws_set_options(path=MQTT_WS_PATH)
+    if transport == "websockets":
+      client.ws_set_options(path=source["ws_path"])
 
-  if MQTT_USERNAME:
-    mqtt_client.username_pw_set(MQTT_USERNAME, MQTT_PASSWORD)
+    if source["username"]:
+      client.username_pw_set(source["username"], source["password"])
 
-  if MQTT_TLS:
-    if MQTT_CA_CERT:
-      mqtt_client.tls_set(ca_certs=MQTT_CA_CERT)
-    else:
-      mqtt_client.tls_set()
-    if MQTT_TLS_INSECURE:
-      mqtt_client.tls_insecure_set(True)
+    if source["tls"]:
+      if source["ca_cert"]:
+        client.tls_set(ca_certs=source["ca_cert"])
+      else:
+        client.tls_set()
+      if source["tls_insecure"]:
+        client.tls_insecure_set(True)
 
-  mqtt_client.on_connect = mqtt_on_connect
-  mqtt_client.on_disconnect = mqtt_on_disconnect
-  mqtt_client.on_message = mqtt_on_message
+    client.on_connect = mqtt_on_connect
+    client.on_disconnect = mqtt_on_disconnect
+    client.on_message = mqtt_on_message
 
-  mqtt_client.reconnect_delay_set(min_delay=1, max_delay=30)
-  mqtt_client.connect_async(MQTT_HOST, MQTT_PORT, keepalive=30)
-  mqtt_client.loop_start()
+    client.reconnect_delay_set(min_delay=1, max_delay=30)
+    client.connect_async(source["host"], source["port"], keepalive=30)
+    client.loop_start()
+    mqtt_clients.append({"client": client, "label": source["label"]})
 
   background_tasks.clear()
   broadcaster_task = asyncio.create_task(_broadcaster_supervisor())
@@ -1093,13 +1097,13 @@ async def _lifespan(_app: FastAPI):
     background_tasks.clear()
     broadcaster_task = None
 
-    if mqtt_client is not None:
+    for entry in mqtt_clients:
       try:
-        mqtt_client.loop_stop()
-        mqtt_client.disconnect()
+        entry["client"].loop_stop()
+        entry["client"].disconnect()
       except Exception:
         pass
-      mqtt_client = None
+    mqtt_clients = []
 
 
 app = FastAPI(lifespan=_lifespan)
@@ -2353,11 +2357,15 @@ async def _state_saver() -> None:
 
 
 def mqtt_on_connect(client, userdata, flags, reason_code, properties=None):
-  topics_str = ", ".join(MQTT_TOPICS)
-  print(
-    f"[mqtt] connected reason_code={reason_code} subscribing topics={topics_str}"
+  label = userdata.get("label", "?") if isinstance(userdata, dict) else "?"
+  topics = (
+    userdata.get("topics", MQTT_TOPICS) if isinstance(userdata, dict) else MQTT_TOPICS
   )
-  for topic in MQTT_TOPICS:
+  topics_str = ", ".join(topics)
+  print(
+    f"[mqtt] connected label={label} reason_code={reason_code} subscribing topics={topics_str}"
+  )
+  for topic in topics:
     client.subscribe(topic, qos=0)
 
 
@@ -4013,25 +4021,61 @@ def service_worker():
 
 
 def _mqtt_listener_health() -> Dict[str, Any]:
-  client = mqtt_client
-  connected = False
-  if client is not None:
-    try:
-      connected = bool(client.is_connected())
-    except Exception:
-      connected = False
-  thread = getattr(client, "_thread", None) if client is not None else None
-  network_loop_alive = bool(thread and thread.is_alive())
-  if connected and network_loop_alive:
-    status_value = "ok"
-  elif connected:
-    status_value = "unhealthy"
-  else:
+  """
+  Aggregates health across every configured MQTT source. Overall status
+  is "ok" only when every source is connected with a live network
+  thread, "unhealthy" if any connected source's network thread has died
+  (the single-source edge case this already caught) or if literally no
+  source is connected, and "degraded" when some but not all sources are
+  up — a secondary source being down (e.g. a partner network's broker
+  having an outage) should not read the same as the whole listener
+  being down.
+  """
+  sources = []
+  any_ok = False
+  any_disconnected = False
+  for entry in mqtt_clients:
+    client = entry.get("client")
+    label = entry.get("label")
+    connected = False
+    if client is not None:
+      try:
+        connected = bool(client.is_connected())
+      except Exception:
+        connected = False
+    thread = getattr(client, "_thread", None) if client is not None else None
+    network_loop_alive = bool(thread and thread.is_alive())
+    if connected and network_loop_alive:
+      source_status = "ok"
+      any_ok = True
+    elif connected:
+      source_status = "unhealthy"
+    else:
+      source_status = "degraded"
+      any_disconnected = True
+    sources.append({
+      "label": label,
+      "status": source_status,
+      "connected": connected,
+      "network_loop_alive": network_loop_alive,
+    })
+
+  if not mqtt_clients:
     status_value = "degraded"
+  elif any(s["status"] == "unhealthy" for s in sources):
+    status_value = "unhealthy"
+  elif any_ok and not any_disconnected:
+    status_value = "ok"
+  elif any_ok:
+    status_value = "degraded"
+  else:
+    status_value = "unhealthy"
+
   return {
     "status": status_value,
-    "connected": connected,
-    "network_loop_alive": network_loop_alive,
+    "sources": sources,
+    "connected": any_ok,
+    "network_loop_alive": any_ok,
     "last_rx_ts": stats.get("last_rx_ts"),
     "callback_errors_total": int(stats.get("callback_errors_total") or 0),
     "last_callback_error_ts": stats.get("last_callback_error_ts"),

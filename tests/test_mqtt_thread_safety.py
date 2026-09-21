@@ -60,6 +60,11 @@ class _ConnectedClient:
     return True
 
 
+class _DisconnectedClient:
+  def is_connected(self):
+    return False
+
+
 class _DoneTask:
   def done(self):
     return True
@@ -135,17 +140,83 @@ def test_mqtt_callback_logs_failure_and_processes_next_message(
 
 
 def test_mqtt_health_detects_dead_network_thread(monkeypatch):
-  monkeypatch.setattr(app, "mqtt_client", _ConnectedClientWithDeadThread())
+  monkeypatch.setattr(
+    app,
+    "mqtt_clients",
+    [{"client": _ConnectedClientWithDeadThread(), "label": "primary"}],
+  )
 
   health = app._mqtt_listener_health()
 
   assert health["status"] == "unhealthy"
+  assert health["sources"][0]["connected"] is True
+  assert health["sources"][0]["network_loop_alive"] is False
+
+
+def test_mqtt_health_ok_when_all_sources_connected(monkeypatch):
+  monkeypatch.setattr(
+    app,
+    "mqtt_clients",
+    [
+      {"client": _ConnectedClient(), "label": "primary"},
+      {"client": _ConnectedClient(), "label": "secondary"},
+    ],
+  )
+
+  health = app._mqtt_listener_health()
+
+  assert health["status"] == "ok"
   assert health["connected"] is True
-  assert health["network_loop_alive"] is False
+  assert [s["status"] for s in health["sources"]] == ["ok", "ok"]
+
+
+def test_mqtt_health_degraded_when_one_of_several_sources_is_down(monkeypatch):
+  monkeypatch.setattr(
+    app,
+    "mqtt_clients",
+    [
+      {"client": _ConnectedClient(), "label": "primary"},
+      {"client": _DisconnectedClient(), "label": "secondary"},
+    ],
+  )
+
+  health = app._mqtt_listener_health()
+
+  # A secondary source being down is real degradation to surface, but it
+  # should not read identically to the whole listener being down — the
+  # primary source is still delivering data.
+  assert health["status"] == "degraded"
+  assert health["connected"] is True
+
+
+def test_mqtt_health_unhealthy_when_no_sources_connected(monkeypatch):
+  monkeypatch.setattr(
+    app,
+    "mqtt_clients",
+    [{"client": _DisconnectedClient(), "label": "primary"}],
+  )
+
+  health = app._mqtt_listener_health()
+
+  assert health["status"] == "unhealthy"
+  assert health["connected"] is False
+
+
+def test_mqtt_health_degraded_with_no_configured_sources(monkeypatch):
+  monkeypatch.setattr(app, "mqtt_clients", [])
+
+  health = app._mqtt_listener_health()
+
+  assert health["status"] == "degraded"
+  assert health["sources"] == []
 
 
 def test_health_endpoint_fails_when_mqtt_network_thread_is_dead(monkeypatch):
-  monkeypatch.setattr(app, "mqtt_client", _ConnectedClientWithDeadThread())
+  monkeypatch.setattr(
+    app,
+    "mqtt_clients",
+    [{"client": _ConnectedClientWithDeadThread(), "label": "primary"}],
+  )
 
   response = TestClient(app.app).get("/health")
 
@@ -154,7 +225,9 @@ def test_health_endpoint_fails_when_mqtt_network_thread_is_dead(monkeypatch):
 
 
 def test_health_endpoint_fails_when_broadcaster_task_stops(monkeypatch):
-  monkeypatch.setattr(app, "mqtt_client", _ConnectedClient())
+  monkeypatch.setattr(
+    app, "mqtt_clients", [{"client": _ConnectedClient(), "label": "primary"}]
+  )
   monkeypatch.setattr(app, "broadcaster_task", _DoneTask())
 
   response = TestClient(app.app).get("/health")

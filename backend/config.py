@@ -21,6 +21,45 @@ MQTT_WS_PATH = os.getenv("MQTT_WS_PATH", "/mqtt")  # often "/" or "/mqtt"
 
 MQTT_CLIENT_ID = os.getenv("MQTT_CLIENT_ID", "")
 
+def _load_mqtt_sources():
+  """
+  Build the list of MQTT sources to connect to. Source 1 uses the
+  unsuffixed vars above (MQTT_HOST, MQTT_PORT, ...) so existing .env
+  files keep working unchanged. Source 2+ use a numeric suffix
+  (MQTT_HOST_2, MQTT_PORT_2, ...). Stops at the first missing
+  MQTT_HOST_N, so adding a second broker is just adding a
+  MQTT_HOST_2 (+ any of the other _2 vars it needs).
+  """
+  sources = []
+  i = 1
+  while True:
+    suffix = "" if i == 1 else f"_{i}"
+    host = os.getenv(f"MQTT_HOST{suffix}")
+    if i == 1:
+      host = host or "localhost"
+    if not host:
+      break
+    topic = os.getenv(f"MQTT_TOPIC{suffix}", "meshcore/#")
+    sources.append({
+      "label": os.getenv(f"MQTT_LABEL{suffix}", host),
+      "host": host,
+      "port": int(os.getenv(f"MQTT_PORT{suffix}", "1883")),
+      "username": os.getenv(f"MQTT_USERNAME{suffix}", ""),
+      "password": os.getenv(f"MQTT_PASSWORD{suffix}", ""),
+      "topics": [t.strip() for t in topic.split(",") if t.strip()],
+      "tls": os.getenv(f"MQTT_TLS{suffix}", "false").lower() == "true",
+      "tls_insecure": os.getenv(f"MQTT_TLS_INSECURE{suffix}", "false").lower() == "true",
+      "ca_cert": os.getenv(f"MQTT_CA_CERT{suffix}", ""),
+      "transport": os.getenv(f"MQTT_TRANSPORT{suffix}", "tcp").strip().lower(),
+      "ws_path": os.getenv(f"MQTT_WS_PATH{suffix}", "/mqtt"),
+      "client_id": os.getenv(f"MQTT_CLIENT_ID{suffix}", ""),
+    })
+    i += 1
+  return sources
+
+
+MQTT_SOURCES = _load_mqtt_sources()
+
 STATE_DIR = os.getenv("STATE_DIR", "/data")
 STATE_FILE = os.getenv("STATE_FILE", os.path.join(STATE_DIR, "state.json"))
 DEVICE_ROLES_FILE = os.getenv("DEVICE_ROLES_FILE",
