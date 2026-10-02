@@ -828,6 +828,7 @@ const REGION_CENTROIDS = {
   MFE: [26.2034, -98.2300],
   SJT: [31.4638, -100.4370],
   TXK: [33.4418, -94.0377],
+  GGG: [32.4200, -95.0200], // between Longview and Tyler ("Longview-Tyler")
   CRP: [27.8006, -97.3964],
   ACT: [31.5493, -97.1467],
 };
@@ -8178,6 +8179,11 @@ if (regionSelect) {
     const centroid = REGION_CENTROIDS[selectedRegion.toUpperCase()];
     if (centroid) {
       map.setView(centroid, REGION_ZOOM);
+    } else {
+      // "All" (or any value with no known centroid) resets to the site's
+      // configured statewide default view instead of leaving the map
+      // wherever the previously-selected region left it.
+      map.setView([mapStartLat, mapStartLon], mapStartZoom);
     }
     refreshViewportLayers();
     routeLines.forEach((entry, routeId) => {
