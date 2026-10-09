@@ -7,6 +7,7 @@ import os
 import html
 import time
 import subprocess
+import ssl
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from dataclasses import asdict
@@ -1058,12 +1059,13 @@ async def _lifespan(_app: FastAPI):
       client.username_pw_set(source["username"], source["password"])
 
     if source["tls"]:
-      if source["ca_cert"]:
+      if source["tls_insecure"]:
+        client.tls_set(cert_reqs=ssl.CERT_NONE)
+        client.tls_insecure_set(True)
+      elif source["ca_cert"]:
         client.tls_set(ca_certs=source["ca_cert"])
       else:
         client.tls_set()
-      if source["tls_insecure"]:
-        client.tls_insecure_set(True)
 
     client.on_connect = mqtt_on_connect
     client.on_disconnect = mqtt_on_disconnect
@@ -2413,6 +2415,17 @@ def _handle_mqtt_message(client, userdata, msg: mqtt.MQTTMessage):
       loop.call_soon_threadsafe(update_queue.put_nowait, mqtt_presence_event)
 
   parsed, debug = _try_parse_payload(msg.topic, msg.payload)
+  if debug.get("invalid_packet") is True:
+    # Presence above belongs to the topic observer, never the rejected sender.
+    # Do not retain/log packet previews or trust envelope metadata on this path.
+    result_counts["invalid_packet"] = result_counts.get("invalid_packet", 0) + 1
+    stats["unparsed_total"] += 1
+    debug_last.append({
+      "ts": time.time(),
+      "result": "invalid_packet",
+      "decoder_meta": debug.get("decoder_meta"),
+    })
+    return
   device_id_hint = parsed.get("device_id") if parsed else None
   # Also try to get device_id from topic if parsing failed or no device_id in parsed data
   topic_device_id = _device_id_from_topic(msg.topic)
@@ -2766,6 +2779,8 @@ def _handle_mqtt_message(client, userdata, msg: mqtt.MQTTMessage):
 # =========================
 async def broadcaster():
   while True:
+    # Queue.get may not yield when backlogged; keep HTTP/new WS schedulable.
+    await asyncio.sleep(0)
     event = await update_queue.get()
     broadcaster_stats["last_event_ts"] = time.time()
 
@@ -2845,6 +2860,7 @@ async def broadcaster():
       points = event.get("points")
       used_hashes: List[str] = []
       point_ids: List[Optional[str]] = []
+      evidence_ids: List[Optional[str]] = []
 
       if not points:
         path_hashes = event.get("path_hashes") or []
@@ -2853,6 +2869,7 @@ async def broadcaster():
           event.get("origin_id"),
           event.get("receiver_id"),
           event.get("ts") or time.time(),
+          evidence_ids=evidence_ids,
         )
 
       if not points and route_mode == "fanout":
@@ -2864,6 +2881,7 @@ async def broadcaster():
           len(points) == 2
         ):
           point_ids = [event.get("origin_id"), event.get("receiver_id")]
+          evidence_ids = list(point_ids)
 
       # Fallback: if path hashes are missing/unknown, draw a direct link when possible.
       if not points:
@@ -2877,6 +2895,7 @@ async def broadcaster():
             len(points) == 2
           ):
             point_ids = [event.get("origin_id"), event.get("receiver_id")]
+            evidence_ids = list(point_ids)
 
       if not points:
         continue
@@ -2932,10 +2951,13 @@ async def broadcaster():
       routes[route_id] = route
 
       if point_ids and used_hashes:
-        _record_neighbors(point_ids, route["ts"])
-      _update_path_timestamps(point_ids, route["ts"])
+        _record_neighbors(evidence_ids, route["ts"])
+      _update_path_timestamps(evidence_ids, route["ts"])
 
-      history_updates, history_removed = _record_route_history(route)
+      # Keep guessed geometry without learning or persisting guessed peer IDs.
+      history_updates, history_removed = _record_route_history(
+        {**route, "point_ids": evidence_ids}
+      )
 
       payload = {"type": "route", "route": _route_payload(route)}
       await _broadcast_payloads([payload])
