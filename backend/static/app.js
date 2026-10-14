@@ -833,7 +833,7 @@ const REGION_CENTROIDS = {
   MFE: [26.2034, -98.2300],
   SJT: [31.4638, -100.4370],
   TXK: [33.4418, -94.0377],
-  GGG: [32.4200, -95.0200], // between Longview and Tyler ("Longview-Tyler")
+  TYR: [32.4200, -95.0200], // between Tyler and Longview (was GGG until 2026-10-14)
   CRP: [27.8006, -97.3964],
   ACT: [31.5493, -97.1467],
 };

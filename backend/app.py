@@ -1769,6 +1769,15 @@ def _dedupe_loaded_devices() -> Set[str]:
   return dropped_ids
 
 
+# MeshTexas: a retired region code still sent by observers maps to its
+# replacement, e.g. IATA_ALIASES=GGG:TYR (comma-separated FROM:TO pairs).
+IATA_ALIASES = {
+  pair.split(":", 1)[0].strip().upper(): pair.split(":", 1)[1].strip().upper()
+  for pair in os.getenv("IATA_ALIASES", "").split(",")
+  if ":" in pair and pair.split(":", 1)[1].strip()
+}
+
+
 def _parse_meshcore_topic(
   topic: str
 ) -> Tuple[Optional[str], Optional[str], Optional[str]]:
@@ -1776,6 +1785,8 @@ def _parse_meshcore_topic(
   if len(parts) < 4 or parts[0] != "meshcore":
     return (None, None, None)
   iata = parts[1].strip() or None
+  if iata and iata.upper() in IATA_ALIASES:
+    iata = IATA_ALIASES[iata.upper()]
   node_id = parts[2].strip() or None
   kind = parts[3].strip().lower() or None
   return (iata, node_id, kind)
