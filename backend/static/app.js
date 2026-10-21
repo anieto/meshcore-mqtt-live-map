@@ -329,25 +329,33 @@ function homeAreaShadeEnabled() {
   }
 }
 
+const HOME_AREA_SHADE_STYLES = {
+  light: { fill: 0.07, edge: '#64748b', edgeOpacity: 0.5, weight: 1 },
+  dark: { fill: 0.25, edge: '#94a3b8', edgeOpacity: 0.5, weight: 1 },
+  topo: { fill: 0.3, edge: '#1e293b', edgeOpacity: 0.7, weight: 1.5 },
+  satellite: { fill: 0.45, edge: '#f1f5f9', edgeOpacity: 0.8, weight: 1.5 }
+};
+
 function updateHomeAreaShade() {
   if (homeAreaShade) {
     map.removeLayer(homeAreaShade);
     homeAreaShade = null;
   }
   if (!homeAreaRenderer || !homeAreaShadeEnabled()) return;
-  // Dark tiles are near black, so darkening the outside barely shows; dark
-  // (and satellite) shade harder, and dark adds a faint glow inside.
-  const darkish = baseLayer === 'dark' || baseLayer === 'satellite';
+  // Busy or dark basemaps need a heavier shade to show at all: topo's
+  // terrain colours and satellite imagery swallow the light one, and on the
+  // near-black dark map a faint glow inside carries the contrast.
+  const style = HOME_AREA_SHADE_STYLES[baseLayer] || HOME_AREA_SHADE_STYLES.light;
   const world = [[85, -180], [85, 180], [-85, 180], [-85, -180]];
   const outside = L.polygon([world, homeAreaOutline], {
     renderer: homeAreaRenderer,
     interactive: false,
-    color: darkish ? '#94a3b8' : '#64748b',
-    weight: 1,
-    opacity: 0.5,
+    color: style.edge,
+    weight: style.weight,
+    opacity: style.edgeOpacity,
     dashArray: '4 4',
     fillColor: '#000',
-    fillOpacity: darkish ? 0.25 : 0.07
+    fillOpacity: style.fill
   });
   homeAreaShade = baseLayer === 'dark'
     ? L.layerGroup([outside, L.polygon(homeAreaOutline, {
