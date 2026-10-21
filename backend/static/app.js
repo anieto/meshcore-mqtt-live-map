@@ -296,6 +296,71 @@ if (mapBoundaryMode === 'polygon' && activeBoundaryShow && mapBoundaryPoints.len
     });
   }
 }
+// MeshTexas: shade everything outside the home area (display only — nodes
+// outside it are still shown). Its own pane and a wide SVG margin keep it
+// steady through zoom animations.
+let homeAreaOutline = [];
+try {
+  const homeAreaEl = document.getElementById('home-area-data');
+  const parsed = JSON.parse(homeAreaEl ? homeAreaEl.textContent || '[]' : '[]');
+  if (Array.isArray(parsed)) {
+    homeAreaOutline = parsed.filter((p) => Array.isArray(p) && p.length >= 2 &&
+      Number.isFinite(Number(p[0])) && Number.isFinite(Number(p[1])));
+  }
+} catch (err) {
+  homeAreaOutline = [];
+}
+const HOME_AREA_SHADE_KEY = 'meshtexasHomeAreaShade';
+let homeAreaShade = null;
+let homeAreaRenderer = null;
+if (homeAreaOutline.length >= 3) {
+  if (!map.getPane('homeAreaShadePane')) map.createPane('homeAreaShadePane');
+  const homeAreaPane = map.getPane('homeAreaShadePane');
+  homeAreaPane.style.zIndex = '310';
+  homeAreaPane.style.pointerEvents = 'none';
+  homeAreaRenderer = L.svg({ padding: 1.5, pane: 'homeAreaShadePane' });
+}
+
+function homeAreaShadeEnabled() {
+  try {
+    return localStorage.getItem(HOME_AREA_SHADE_KEY) !== 'false';
+  } catch (err) {
+    return true;
+  }
+}
+
+function updateHomeAreaShade() {
+  if (homeAreaShade) {
+    map.removeLayer(homeAreaShade);
+    homeAreaShade = null;
+  }
+  if (!homeAreaRenderer || !homeAreaShadeEnabled()) return;
+  // Dark tiles are near black, so darkening the outside barely shows; dark
+  // (and satellite) shade harder, and dark adds a faint glow inside.
+  const darkish = baseLayer === 'dark' || baseLayer === 'satellite';
+  const world = [[85, -180], [85, 180], [-85, 180], [-85, -180]];
+  const outside = L.polygon([world, homeAreaOutline], {
+    renderer: homeAreaRenderer,
+    interactive: false,
+    color: darkish ? '#94a3b8' : '#64748b',
+    weight: 1,
+    opacity: 0.5,
+    dashArray: '4 4',
+    fillColor: '#000',
+    fillOpacity: darkish ? 0.25 : 0.07
+  });
+  homeAreaShade = baseLayer === 'dark'
+    ? L.layerGroup([outside, L.polygon(homeAreaOutline, {
+      renderer: homeAreaRenderer,
+      interactive: false,
+      stroke: false,
+      fillColor: '#fff',
+      fillOpacity: 0.06
+    })])
+    : outside;
+  homeAreaShade.addTo(map);
+}
+
 const storedLayer = localStorage.getItem('meshmapBaseLayer');
 if (!validLayers.has(queryLayer) && validLayers.has(storedLayer)) {
   baseLayer = storedLayer;
@@ -8122,6 +8187,7 @@ function setBaseLayer(name) {
   document.body.classList.toggle('dark-map', name === 'dark');
   baseLayer = name;
   localStorage.setItem('meshmapBaseLayer', baseLayer);
+  updateHomeAreaShade();
   if (mapToggle) {
     mapToggle.hidden = false;
     mapToggle.textContent = baseLayer === 'dark' ? 'Light map' : 'Dark map';
@@ -8142,6 +8208,27 @@ function nextStandardMapLayer() {
   if (baseLayer === 'topo') return 'satellite';
   if (baseLayer === 'satellite') return 'light';
   return 'topo';
+}
+
+const shadeToggle = document.getElementById('shade-toggle');
+if (shadeToggle && homeAreaRenderer) {
+  shadeToggle.hidden = false;
+  shadeToggle.textContent = homeAreaShadeEnabled() ? 'Hide shade' : 'Show shade';
+  shadeToggle.addEventListener('click', () => {
+    const next = !homeAreaShadeEnabled();
+    try {
+      localStorage.setItem(HOME_AREA_SHADE_KEY, String(next));
+    } catch (err) {
+      // Private mode: the toggle still works for this page view.
+    }
+    shadeToggle.textContent = next ? 'Hide shade' : 'Show shade';
+    if (next) {
+      updateHomeAreaShade();
+    } else if (homeAreaShade) {
+      map.removeLayer(homeAreaShade);
+      homeAreaShade = null;
+    }
+  });
 }
 
 if (mapToggle) {

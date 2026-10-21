@@ -298,6 +298,12 @@ MAP_RADIUS_SHOW = os.getenv("MAP_RADIUS_SHOW", "false").lower() == "true"
 MAP_BOUNDARY_MODE = os.getenv("MAP_BOUNDARY_MODE", "radius").strip().lower()
 if MAP_BOUNDARY_MODE not in ("radius", "polygon"):
   MAP_BOUNDARY_MODE = "radius"
+# MeshTexas: display-only home-area outline ([lat, lon] points under
+# "outline" or "polygon"). The map shades everything outside it; unlike the
+# map boundary, nothing is filtered.
+HOME_AREA_FILE = os.getenv(
+  "HOME_AREA_FILE", os.path.join(STATE_DIR, "home_area.json")
+)
 MAP_BOUNDARY_FILE = os.getenv(
   "MAP_BOUNDARY_FILE", os.path.join(STATE_DIR, "map_boundary.json")
 ).strip()

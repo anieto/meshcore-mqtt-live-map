@@ -70,6 +70,7 @@
   data-update-available="{{UPDATE_AVAILABLE}}" data-update-local="{{UPDATE_LOCAL}}"
   data-update-remote="{{UPDATE_REMOTE}}" data-turnstile-enabled="{{TURNSTILE_ENABLED}}">
   <script id="map-boundary-data" type="application/json">{{MAP_BOUNDARY_JSON}}</script>
+  <script id="home-area-data" type="application/json">{{HOME_AREA_JSON}}</script>
   <script>
     window.__meshmapStarted = false;
     window.__meshmapReportError = (message) => console.warn(message);
@@ -150,6 +151,7 @@
       <button class="map-toggle" id="labels-toggle" type="button">Labels Off</button>
       <button class="map-toggle" id="nodes-toggle" type="button">Hide nodes</button>
       <button class="map-toggle" id="heat-toggle" type="button">Hide heat</button>
+      <button class="map-toggle" id="shade-toggle" type="button" hidden>Hide shade</button>
       <button class="map-toggle" id="coverage-toggle" type="button">Coverage</button>
       <button class="map-toggle" id="weather-toggle" type="button">Weather</button>
       <button class="map-toggle" id="history-toggle" type="button">History tool</button>

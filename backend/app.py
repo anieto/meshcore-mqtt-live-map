@@ -88,6 +88,7 @@ from los import (
 
 logger = logging.getLogger(__name__)
 from config import (
+  HOME_AREA_FILE,
   MQTT_HOST,
   MQTT_PORT,
   MQTT_USERNAME,
@@ -1960,6 +1961,19 @@ def _record_mqtt_presence(
   return event
 
 
+def _home_area_json() -> str:
+  """MeshTexas: home-area outline for the map shade, as page-safe JSON."""
+  try:
+    with open(HOME_AREA_FILE, "r", encoding="utf-8") as handle:
+      data = json.load(handle)
+    raw = data.get("outline") or data.get("polygon") or []
+    points = [[float(p[0]), float(p[1])] for p in raw
+              if isinstance(p, (list, tuple)) and len(p) >= 2]
+  except (OSError, ValueError, TypeError, AttributeError):
+    points = []
+  return json.dumps(points).replace("</", "<\\/")
+
+
 def _within_map_radius(lat: Any, lon: Any) -> bool:
   return within_map_boundary(lat, lon)
 
@@ -3384,6 +3398,7 @@ def root(request: Request):
   # Values are escaped by the replacement loop below.
   SAFE_OG_URL = str(og_url)
   content = content.replace("{{MAP_BOUNDARY_JSON}}", boundary_json)
+  content = content.replace("{{HOME_AREA_JSON}}", _home_area_json())
 
   replacements = {
     "SITE_TITLE":
@@ -3871,6 +3886,7 @@ def map_page(request: Request):
 
   SAFE_OG_URL = str(og_url)
   content = content.replace("{{MAP_BOUNDARY_JSON}}", boundary_json)
+  content = content.replace("{{HOME_AREA_JSON}}", _home_area_json())
 
   replacements = {
     "SITE_TITLE": SITE_TITLE,
