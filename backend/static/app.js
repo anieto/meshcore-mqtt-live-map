@@ -8376,6 +8376,11 @@ if (regionSelect) {
   // does, once, right after restoring the value.
   if (selectedRegion !== 'all') {
     applySelectedRegion();
+  } else if (homeAreaOutline.length >= 3 &&
+             !Number.isFinite(queryLat) && !Number.isFinite(queryLon) && !Number.isFinite(queryZoom)) {
+    // MeshTexas: loading with "All" shows the whole home area too, unless
+    // the link itself asked for a lat/lon/zoom.
+    map.fitBounds(L.latLngBounds(homeAreaOutline), { padding: [20, 20] });
   }
   regionSelect.addEventListener('change', () => {
     selectedRegion = regionSelect.value || 'all';
