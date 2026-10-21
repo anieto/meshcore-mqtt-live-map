@@ -8351,6 +8351,10 @@ if (regionSelect) {
     const centroid = REGION_CENTROIDS[selectedRegion.toUpperCase()];
     if (centroid) {
       map.setView(centroid, REGION_ZOOM);
+    } else if (homeAreaOutline.length >= 3) {
+      // MeshTexas: "All" fits the whole home area (Texas + buffer); the
+      // configured start view is centred on one metro.
+      map.fitBounds(L.latLngBounds(homeAreaOutline), { padding: [20, 20] });
     } else {
       // "All" (or any value with no known centroid) resets to the site's
       // configured statewide default view instead of leaving the map
