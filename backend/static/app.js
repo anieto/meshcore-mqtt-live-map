@@ -911,6 +911,9 @@ const REGION_CENTROIDS = {
   ACT: [31.5493, -97.1467],
   LBB: [33.5779, -101.8552],
   MAF: [31.9200, -102.2200], // between Midland and Odessa
+  DRT: [29.3709, -100.8959],
+  UVA: [28.9500, -100.0500], // between Uvalde, Eagle Pass and Crystal City
+  LRD: [27.5306, -99.4803],
 };
 const REGION_ZOOM = 10;
 let selectedRegion = localStorage.getItem('meshmapSelectedRegion') || 'all';
