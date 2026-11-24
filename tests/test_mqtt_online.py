@@ -329,3 +329,37 @@ def test_route_event_prefers_packet_hash_for_route_identity(monkeypatch):
   route_events = [event for event in queue.events if event.get("type") == "route"]
   assert route_events
   assert route_events[0]["message_hash"] == "7232623D62E7848D"
+
+
+def _packet_with_role(monkeypatch, lat, lon, role="companion"):
+  parsed = {"device_id": "CCCC2222", "lat": lat, "lon": lon, "ts": time.time()}
+  debug = {
+    "result": "decoded",
+    "device_role": role,
+    "decoded_pubkey": "CCCC2222",
+    "origin_id": "ABCD1111",
+  }
+  monkeypatch.setattr(app, "_try_parse_payload", lambda *_a, **_k: (dict(parsed), dict(debug)))
+
+
+def test_dropped_zero_coord_advert_role_goes_to_sender_not_observer(monkeypatch):
+  _clear_runtime_state()
+  _packet_with_role(monkeypatch, 0.0, 0.0)
+  app.device_roles["ABCD1111"] = "repeater"
+
+  app.mqtt_on_message(None, {"loop": _DummyLoop()}, _DummyMsg("meshcore/HOU/ABCD1111/packets"))
+
+  assert app.device_roles.get("ABCD1111") == "repeater"
+  assert app.device_roles.get("CCCC2222") == "companion"
+
+
+def test_dropped_out_of_radius_advert_role_goes_to_sender_not_observer(monkeypatch):
+  _clear_runtime_state()
+  _packet_with_role(monkeypatch, 47.6, -122.3)
+  monkeypatch.setattr(app, "_within_map_radius", lambda *_a, **_k: False)
+  app.device_roles["ABCD1111"] = "repeater"
+
+  app.mqtt_on_message(None, {"loop": _DummyLoop()}, _DummyMsg("meshcore/HOU/ABCD1111/packets"))
+
+  assert app.device_roles.get("ABCD1111") == "repeater"
+  assert app.device_roles.get("CCCC2222") == "companion"

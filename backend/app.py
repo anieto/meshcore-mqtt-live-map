@@ -2586,7 +2586,11 @@ def _handle_mqtt_message(client, userdata, msg: mqtt.MQTTMessage):
   result = debug.get("result") or "unknown"
   device_role = debug.get("device_role")
   role_target_id = origin_id
-  if device_role and result.startswith("decoded"):
+  # A role read from a decoded RF packet belongs to that packet's sender, even
+  # when the packet is then dropped (0,0 coordinates, outside the map radius).
+  # Falling back to origin_id there would give the uploading observer the
+  # sender's role, e.g. mark a repeater as a companion it heard.
+  if device_role and (result.startswith("decoded") or debug.get("decoded_pubkey")):
     role_target_id = None
     loc_meta = (
       decoder_meta.get("location") if isinstance(decoder_meta, dict) else None
